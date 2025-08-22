@@ -1,5 +1,6 @@
 // The module 'vscode' contains the VS Code extensibility API
 // Import the module and reference it with the alias vscode in your code below
+import { text } from 'stream/consumers';
 import * as vscode from 'vscode';
 import WebSocket = require("ws");
 
@@ -10,7 +11,6 @@ let ws:WebSocket | null = null;
 // Your extension is activated the very first time the command is executed
 export function activate(context: vscode.ExtensionContext) {
 
-	let disposable = vscode.commands.registerCommand('colloborative.startSession',async () => {
 		// vscode.window.showInformationMessage('Starting Collaboration Session...');
 		vscode.window.showInformationMessage('Starting Session...');
 		console.log("web socket");
@@ -20,17 +20,58 @@ export function activate(context: vscode.ExtensionContext) {
 			vscode.window.showInformationMessage('WebSocket connection established');
 			ws?.send('hello from vscode client');
 		});
-		ws.on("message",(event: MessageEvent)=>{
-			vscode.window.showInformationMessage(`Received message: ${event.data}`);
+		ws.on("message",(event)=>{
+			vscode.window.showInformationMessage(`Received message: ${event}`);
+			try{
+			const data = JSON.parse(event.toString());
+			if(data.type === "update"){
+				applyRemoteEdit(data);
+			}
+
+		}
+		catch(error){
+			console.log(error);
+		}
+
+		});
+
+		vscode.workspace.onDidChangeTextDocument((event) => {
+	     if(event.contentChanges.length > 0 && ws?.readyState === ws?.OPEN){
+			const changes = event.contentChanges[0];
+			console.log(changes,"changes");
+			const payload = {
+			 type:"update",
+			 file:event.document.uri.toString(),
+			 range:changes.range,
+			 text:changes.text
+			};
+			console.log(payload,"payload");
+			ws?.send(JSON.stringify(payload));
+		 }
+		
 		});
 		ws.on("close",()=>{
 			vscode.window.showInformationMessage('WebSocket connection closed');
 		});
 
-	});
+	function applyRemoteEdit(data:any){
+	const uri = vscode.Uri.parse(data.file);
+	vscode.workspace.openTextDocument(uri).then((doc) => {
+	const edit = new vscode.WorkspaceEdit();
+	edit.replace(uri,new vscode.Range(
+		new vscode.Position(data.range.start.line,data.range.start.character),
+		new vscode.Position(data.range.end.line,data.range.end.character)
+	),data.text);
+vscode.workspace.applyEdit(edit);	
+});
 
-	context.subscriptions.push(disposable);
+
+	}
+	
+
 }
+
+
 
 
 // This method is called when your extension is deactivated

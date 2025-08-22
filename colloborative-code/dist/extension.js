@@ -41,32 +41,58 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.activate = activate;
 exports.deactivate = deactivate;
-// The module 'vscode' contains the VS Code extensibility API
-// Import the module and reference it with the alias vscode in your code below
 const vscode = __importStar(__webpack_require__(1));
 const WebSocket = __webpack_require__(2);
 let ws = null;
 // This method is called when your extension is activated
 // Your extension is activated the very first time the command is executed
 function activate(context) {
-    let disposable = vscode.commands.registerCommand('colloborative.startSession', async () => {
-        // vscode.window.showInformationMessage('Starting Collaboration Session...');
-        vscode.window.showInformationMessage('Starting Session...');
-        console.log("web socket");
-        ws = new WebSocket('ws://localhost:8081');
-        vscode.window.showInformationMessage(ws.url);
-        ws.on("open", () => {
-            vscode.window.showInformationMessage('WebSocket connection established');
-            ws?.send('hello from vscode client');
-        });
-        ws.on("message", (event) => {
-            vscode.window.showInformationMessage(`Received message: ${event.data}`);
-        });
-        ws.on("close", () => {
-            vscode.window.showInformationMessage('WebSocket connection closed');
-        });
+    // vscode.window.showInformationMessage('Starting Collaboration Session...');
+    vscode.window.showInformationMessage('Starting Session...');
+    console.log("web socket");
+    ws = new WebSocket('ws://localhost:8081');
+    vscode.window.showInformationMessage(ws.url);
+    ws.on("open", () => {
+        vscode.window.showInformationMessage('WebSocket connection established');
+        ws?.send('hello from vscode client');
     });
-    context.subscriptions.push(disposable);
+    ws.on("message", (event) => {
+        vscode.window.showInformationMessage(`Received message: ${event}`);
+        try {
+            const data = JSON.parse(event.toString());
+            if (data.type === "update") {
+                applyRemoteEdit(data);
+            }
+        }
+        catch (error) {
+            console.log(error);
+        }
+    });
+    vscode.workspace.onDidChangeTextDocument((event) => {
+        if (event.contentChanges.length > 0 && ws?.readyState === ws?.OPEN) {
+            const changes = event.contentChanges[0];
+            console.log(changes, "changes");
+            const payload = {
+                type: "update",
+                file: event.document.uri.toString(),
+                range: changes.range,
+                text: changes.text
+            };
+            console.log(payload, "payload");
+            ws?.send(JSON.stringify(payload));
+        }
+    });
+    ws.on("close", () => {
+        vscode.window.showInformationMessage('WebSocket connection closed');
+    });
+    function applyRemoteEdit(data) {
+        const uri = vscode.Uri.parse(data.file);
+        vscode.workspace.openTextDocument(uri).then((doc) => {
+            const edit = new vscode.WorkspaceEdit();
+            edit.replace(uri, new vscode.Range(new vscode.Position(data.range.start.line, data.range.start.character), new vscode.Position(data.range.end.line, data.range.end.character)), data.text);
+            vscode.workspace.applyEdit(edit);
+        });
+    }
 }
 // This method is called when your extension is deactivated
 function deactivate() {

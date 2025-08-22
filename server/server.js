@@ -9,10 +9,10 @@ try {
     ws.send("Welcome to the Collaboration server!");
 
     ws.on("message", (message) => {
-      console.log(`Received message: ${message}`);
+      console.log(`Received message: ${message.toString()}`);
       wss.clients.forEach((client) => {
         if (client.readyState === websocket.OPEN) {
-          client.send(`Echo: ${message}`);
+          client.send(`Echo: ${message.toString()}`);
         }
       });
       ws.on("close", () => {
