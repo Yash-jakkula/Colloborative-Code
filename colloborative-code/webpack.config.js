@@ -22,13 +22,14 @@ const extensionConfig = {
   externals: {
     vscode: "commonjs vscode", // the vscode-module is created on-the-fly and must be excluded. Add other modules that cannot be webpack'ed, 📖 -> https://webpack.js.org/configuration/externals/
     // modules added here also need to be added in the .vscodeignore file
+    ws: "commonjs ws",
   },
   resolve: {
     // support reading TypeScript and JavaScript files, 📖 -> https://github.com/TypeStrong/ts-loader
     extensions: [".ts", ".js"],
     fallback: {
-      bufferutil: false,
-      "utf-8-validate": false,
+      bufferutil: require.resolve("bufferutil"),
+      "utf-8-validate": require.resolve("utf-8-validate"),
     },
   },
   module: {
@@ -44,6 +45,7 @@ const extensionConfig = {
       },
     ],
   },
+
   devtool: "nosources-source-map",
   infrastructureLogging: {
     level: "log", // enables logging required for problem matchers

@@ -1,6 +1,6 @@
 // The module 'vscode' contains the VS Code extensibility API
 // Import the module and reference it with the alias vscode in your code below
-import { text } from 'stream/consumers';
+import { json, text } from 'stream/consumers';
 import * as vscode from 'vscode';
 import WebSocket = require("ws");
 
@@ -14,7 +14,10 @@ export function activate(context: vscode.ExtensionContext) {
 		// vscode.window.showInformationMessage('Starting Collaboration Session...');
 		vscode.window.showInformationMessage('Starting Session...');
 		console.log("web socket");
-		ws = new WebSocket('ws://localhost:8081');
+		ws = new WebSocket("ws://localhost:8081", {
+  perMessageDeflate: false
+});
+
 		vscode.window.showInformationMessage(ws.url);
 		ws.on("open",()=>{
 			vscode.window.showInformationMessage('WebSocket connection established');
@@ -23,6 +26,7 @@ export function activate(context: vscode.ExtensionContext) {
 		ws.on("message",(event)=>{
 			vscode.window.showInformationMessage(`Received message: ${event}`);
 			try{
+				console.log(event.toString(),"event");
 			const data = JSON.parse(event.toString());
 			if(data.type === "update"){
 				applyRemoteEdit(data);
@@ -37,16 +41,29 @@ export function activate(context: vscode.ExtensionContext) {
 
 		vscode.workspace.onDidChangeTextDocument((event) => {
 	     if(event.contentChanges.length > 0 && ws?.readyState === ws?.OPEN){
-			const changes = event.contentChanges[0];
-			console.log(changes,"changes");
-			const payload = {
+			for(const change of event.contentChanges){
+			try{
+				const uri = event.document.uri.toString();
+				ws?.send(JSON.stringify({
 			 type:"update",
-			 file:event.document.uri.toString(),
-			 range:changes.range,
-			 text:changes.text
-			};
-			console.log(payload,"payload");
-			ws?.send(JSON.stringify(payload));
+			 file:uri ?? "",
+			 range:{
+				start:{
+					line:change.range.start.line,
+					character:change.range.start.character
+				},
+				end:{
+					line:change.range.end.line,
+					character:change.range.end.character
+				}
+			 },
+			 text:change.text
+			}));
+			}
+			catch(error){
+				console.log(error,"error while sending websocket message");
+			}
+		}
 		 }
 		
 		});
