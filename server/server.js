@@ -5,7 +5,7 @@ const wss = new websocket.Server({ port: 8081 });
 try {
   wss.on("connection", (ws) => {
     console.log("New client connected");
-
+    ws.id = crypto.randomUUID();
     ws.send("Welcome to the Collaboration server!");
 
     ws.on("message", (message) => {
@@ -19,7 +19,7 @@ try {
         data = text;
       }
       wss.clients.forEach((client) => {
-        if (client.readyState === websocket.OPEN) {
+        if (client !== ws && client.readyState === websocket.OPEN) {
           console.log("sending data", data);
           client.send(typeof data === "string" ? data : JSON.stringify(data));
         }

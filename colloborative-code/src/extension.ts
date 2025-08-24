@@ -1,99 +1,60 @@
-// The module 'vscode' contains the VS Code extensibility API
-// Import the module and reference it with the alias vscode in your code below
-import { json, text } from 'stream/consumers';
-import * as vscode from 'vscode';
-import WebSocket = require("ws");
+// extension.ts
+import * as vscode from "vscode";
+import WebSocket  = require('ws');
+import { randomUUID } from "crypto";
 
-let ws:WebSocket | null = null;
+let ws: WebSocket;
+let clientId = randomUUID(); // unique ID for this editor
+let applyingRemoteChange = false;
 
-
-// This method is called when your extension is activated
-// Your extension is activated the very first time the command is executed
 export function activate(context: vscode.ExtensionContext) {
+  ws = new WebSocket("ws://localhost:8081");
 
-		// vscode.window.showInformationMessage('Starting Collaboration Session...');
-		vscode.window.showInformationMessage('Starting Session...');
-		console.log("web socket");
-		ws = new WebSocket("ws://localhost:8081", {
-  perMessageDeflate: false
-});
+  ws.on("open", () => {
+    vscode.window.showInformationMessage("Connected to collab server ✅");
+  });
 
-		vscode.window.showInformationMessage(ws.url);
-		ws.on("open",()=>{
-			vscode.window.showInformationMessage('WebSocket connection established');
-			ws?.send('hello from vscode client');
-		});
-		ws.on("message",(event)=>{
-			vscode.window.showInformationMessage(`Received message: ${event}`);
-			try{
-				console.log(event.toString(),"event");
-			const data = JSON.parse(event.toString());
-			if(data.type === "update"){
-				applyRemoteEdit(data);
-			}
+  ws.on("message", (msg: WebSocket.RawData) => {
+    try {
+      const data = JSON.parse(msg.toString());
 
-		}
-		catch(error){
-			console.log(error);
-		}
+      if (data.clientId === clientId){ 
+		return;
+	  }
 
-		});
+      const editor = vscode.window.activeTextEditor;
+      if (!editor) {
+		return;
+	  }
 
-		vscode.workspace.onDidChangeTextDocument((event) => {
-	     if(event.contentChanges.length > 0 && ws?.readyState === ws?.OPEN){
-			for(const change of event.contentChanges){
-			try{
-				const uri = event.document.uri.toString();
-				ws?.send(JSON.stringify({
-			 type:"update",
-			 file:uri ?? "",
-			 range:{
-				start:{
-					line:change.range.start.line,
-					character:change.range.start.character
-				},
-				end:{
-					line:change.range.end.line,
-					character:change.range.end.character
-				}
-			 },
-			 text:change.text
-			}));
-			}
-			catch(error){
-				console.log(error,"error while sending websocket message");
-			}
-		}
-		 }
-		
-		});
-		ws.on("close",()=>{
-			vscode.window.showInformationMessage('WebSocket connection closed');
-		});
+      applyingRemoteChange = true;
 
-	function applyRemoteEdit(data:any){
-	const uri = vscode.Uri.parse(data.file);
-	vscode.workspace.openTextDocument(uri).then((doc) => {
-	const edit = new vscode.WorkspaceEdit();
-	edit.replace(uri,new vscode.Range(
-		new vscode.Position(data.range.start.line,data.range.start.character),
-		new vscode.Position(data.range.end.line,data.range.end.character)
-	),data.text);
-vscode.workspace.applyEdit(edit);	
-});
+      const fullRange = new vscode.Range(
+        editor.document.positionAt(0),
+        editor.document.positionAt(editor.document.getText().length)
+      );
 
+      editor.edit((editBuilder) => {
+        editBuilder.replace(fullRange, data.text);
+      }).then(() => {
+        applyingRemoteChange = false;
+      });
 
-	}
-	
+    } catch (err) {
+      console.error("Failed to process incoming message:", err);
+    }
+  });
 
-}
+  vscode.workspace.onDidChangeTextDocument((event) => {
+    if (applyingRemoteChange) {return;} 
 
-
-
-
-// This method is called when your extension is deactivated
-export function deactivate() {
-	if(ws){
-		ws.close();
-	}
+    if (event.document === vscode.window.activeTextEditor?.document) {
+      const msg = {
+        clientId,
+        type: "edit",
+        text: event.document.getText(),
+      };
+      ws.send(JSON.stringify(msg));
+    }
+  });
 }
