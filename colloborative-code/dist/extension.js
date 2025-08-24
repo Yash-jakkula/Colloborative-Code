@@ -58,7 +58,11 @@ function activate(context) {
             if (data.clientId === clientId) {
                 return;
             }
-            const editor = vscode.window.activeTextEditor;
+            const target = vscode.workspace.textDocuments.find(doc => doc.uri.fsPath === data.filePath);
+            if (!target) {
+                return;
+            }
+            const editor = vscode.window.visibleTextEditors.find(ed => ed.document === target);
             if (!editor) {
                 return;
             }
@@ -78,9 +82,11 @@ function activate(context) {
         if (applyingRemoteChange) {
             return;
         }
+        const filePath = event.document.uri.fsPath;
         if (event.document === vscode.window.activeTextEditor?.document) {
             const msg = {
                 clientId,
+                filePath,
                 type: "edit",
                 text: event.document.getText(),
             };
