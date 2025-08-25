@@ -1,35 +1,40 @@
-const websocket = require("ws");
+// server.js
+const WebSocket = require("ws");
 
-const wss = new websocket.Server({ port: 8081 });
+const wss = new WebSocket.Server({ port: 3000 });
+const rooms = {};
 
-try {
-  wss.on("connection", (ws) => {
-    console.log("New client connected");
-    ws.id = crypto.randomUUID();
-    ws.send("Welcome to the Collaboration server!");
+wss.on("connection", (ws) => {
+  ws.on("message", (message) => {
+    try {
+      const msg = JSON.parse(message);
 
-    ws.on("message", (message) => {
-      const text = message.toString();
-      console.log(`Received message: ${message.toString()}`);
-      let data;
-      try {
-        data = JSON.parse(text);
-      } catch (err) {
-        console.log(err);
-        data = text;
+      if (msg.type === "join") {
+        ws.room = msg.room;
+        ws.role = msg.role;
+        if (!rooms[msg.room]) rooms[msg.room] = [];
+        rooms[msg.room].push(ws);
+        return;
       }
-      wss.clients.forEach((client) => {
-        if (client !== ws && client.readyState === websocket.OPEN) {
-          console.log("sending data", data);
-          client.send(typeof data === "string" ? data : JSON.stringify(data));
-        }
-      });
-      ws.on("close", () => {
-        console.log("connection closed");
-      });
-    });
+
+      // Broadcast to same room
+      if (ws.room && rooms[ws.room]) {
+        rooms[ws.room].forEach((client) => {
+          if (client !== ws && client.readyState === WebSocket.OPEN) {
+            client.send(JSON.stringify(msg));
+          }
+        });
+      }
+    } catch (err) {
+      console.error("Error", err);
+    }
   });
-} catch (error) {
-  console.error(error);
-}
-console.log("WebSocket server is running on ws://localhost:8081");
+
+  ws.on("close", () => {
+    if (ws.room && rooms[ws.room]) {
+      rooms[ws.room] = rooms[ws.room].filter((c) => c !== ws);
+    }
+  });
+});
+
+console.log("Server running on ws://localhost:3000");

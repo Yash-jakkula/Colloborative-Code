@@ -40,59 +40,116 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.activate = activate;
-// extension.ts
+exports.deactivate = deactivate;
 const vscode = __importStar(__webpack_require__(1));
 const WebSocket = __webpack_require__(2);
-const crypto_1 = __webpack_require__(3);
-let ws;
-let clientId = (0, crypto_1.randomUUID)(); // unique ID for this editor
-let applyingRemoteChange = false;
+const fs = __importStar(__webpack_require__(3));
+const path = __importStar(__webpack_require__(4));
+let ws = null;
+let roomCode = "";
+let isHost = false;
 function activate(context) {
-    ws = new WebSocket("ws://localhost:8081");
-    ws.on("open", () => {
-        vscode.window.showInformationMessage("Connected to collab server ✅");
+    const disposable = vscode.commands.registerCommand("colloborative.startSession", async () => {
+        roomCode = await vscode.window.showInputBox({
+            placeHolder: "Enter room code",
+            prompt: "Users with the same code will join the same room"
+        }) || "";
+        const role = await vscode.window.showQuickPick(["Host", "Client"], {
+            placeHolder: "Choose your role"
+        });
+        isHost = role === "Host";
+        connectWebSocket();
+        // Sync text changes
+        vscode.workspace.onDidChangeTextDocument((event) => {
+            if (ws && ws.readyState === WebSocket.OPEN && isHost) {
+                ws.send(JSON.stringify({
+                    type: "edit",
+                    room: roomCode,
+                    file: event.document.fileName,
+                    content: event.document.getText()
+                }));
+            }
+        });
+        // Sync file open
+        vscode.window.onDidChangeActiveTextEditor((editor) => {
+            if (editor && ws && ws.readyState === WebSocket.OPEN && isHost) {
+                ws.send(JSON.stringify({
+                    type: "fileOpen",
+                    room: roomCode,
+                    file: editor.document.fileName,
+                    content: editor.document.getText()
+                }));
+            }
+        });
     });
-    ws.on("message", (msg) => {
+    context.subscriptions.push(disposable);
+}
+function connectWebSocket() {
+    ws = new WebSocket("ws://localhost:3000");
+    ws.on("open", async () => {
+        vscode.window.showInformationMessage(`Connected to room ${roomCode}`);
+        ws?.send(JSON.stringify({ type: "join", room: roomCode, role: isHost ? "host" : "client" }));
+        // Host sends full workspace
+        if (isHost) {
+            const files = await vscode.workspace.findFiles("**/*");
+            for (const file of files) {
+                try {
+                    const content = fs.readFileSync(file.fsPath, "utf-8");
+                    ws?.send(JSON.stringify({
+                        type: "workspaceFile",
+                        room: roomCode,
+                        file: file.fsPath,
+                        content
+                    }));
+                }
+                catch (err) {
+                    console.error("Error reading file", file.fsPath, err);
+                }
+            }
+        }
+    });
+    ws.on("message", async (data) => {
         try {
-            const data = JSON.parse(msg.toString());
-            if (data.clientId === clientId) {
-                return;
+            const msg = JSON.parse(data.toString());
+            if (msg.room !== roomCode)
+                return; // Ignore other rooms
+            switch (msg.type) {
+                case "workspaceFile":
+                    if (!isHost) {
+                        const uri = vscode.Uri.file(path.join(vscode.workspace.rootPath || "", path.basename(msg.file)));
+                        const doc = await vscode.workspace.openTextDocument({ content: msg.content, language: "typescript" });
+                        await vscode.window.showTextDocument(doc, { preview: false });
+                    }
+                    break;
+                case "fileOpen":
+                    if (!isHost) {
+                        const doc = await vscode.workspace.openTextDocument({ content: msg.content, language: "typescript" });
+                        await vscode.window.showTextDocument(doc, { preview: false });
+                    }
+                    break;
+                case "edit":
+                    if (!isHost) {
+                        const editors = vscode.window.visibleTextEditors;
+                        const editor = editors.find(e => path.basename(e.document.fileName) === path.basename(msg.file));
+                        if (editor) {
+                            const edit = new vscode.WorkspaceEdit();
+                            const fullRange = new vscode.Range(editor.document.positionAt(0), editor.document.positionAt(editor.document.getText().length));
+                            edit.replace(editor.document.uri, fullRange, msg.content);
+                            await vscode.workspace.applyEdit(edit);
+                        }
+                    }
+                    break;
             }
-            const target = vscode.workspace.textDocuments.find(doc => doc.uri.fsPath === data.filePath);
-            if (!target) {
-                return;
-            }
-            const editor = vscode.window.visibleTextEditors.find(ed => ed.document === target);
-            if (!editor) {
-                return;
-            }
-            applyingRemoteChange = true;
-            const fullRange = new vscode.Range(editor.document.positionAt(0), editor.document.positionAt(editor.document.getText().length));
-            editor.edit((editBuilder) => {
-                editBuilder.replace(fullRange, data.text);
-            }).then(() => {
-                applyingRemoteChange = false;
-            });
         }
         catch (err) {
-            console.error("Failed to process incoming message:", err);
+            console.error("Message parse error", err);
         }
     });
-    vscode.workspace.onDidChangeTextDocument((event) => {
-        if (applyingRemoteChange) {
-            return;
-        }
-        const filePath = event.document.uri.fsPath;
-        if (event.document === vscode.window.activeTextEditor?.document) {
-            const msg = {
-                clientId,
-                filePath,
-                type: "edit",
-                text: event.document.getText(),
-            };
-            ws.send(JSON.stringify(msg));
-        }
-    });
+}
+function deactivate() {
+    if (ws) {
+        ws.close();
+    }
 }
 
 
@@ -112,7 +169,13 @@ module.exports = require("ws");
 /* 3 */
 /***/ ((module) => {
 
-module.exports = require("crypto");
+module.exports = require("fs");
+
+/***/ }),
+/* 4 */
+/***/ ((module) => {
+
+module.exports = require("path");
 
 /***/ })
 /******/ 	]);
