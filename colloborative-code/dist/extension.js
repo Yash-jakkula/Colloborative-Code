@@ -82,6 +82,7 @@ function activate(context) {
                 return;
             if (event.contentChanges.length === 0)
                 return;
+            console.log(event, "event on change event");
             for (const change of event.contentChanges) {
                 ws.send(JSON.stringify({
                     type: "edit",

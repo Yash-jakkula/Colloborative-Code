@@ -43,6 +43,7 @@ export function activate(context: vscode.ExtensionContext) {
       if (applyingRemoteChange) return; // Skip remote-applied edits
       if (!ws || ws.readyState !== WebSocket.OPEN) return;
       if (event.contentChanges.length === 0) return;
+      console.log(event,"event on change event");
 
       for (const change of event.contentChanges) {
         ws.send(JSON.stringify({

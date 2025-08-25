@@ -7,6 +7,7 @@ wss.on("connection", (ws) => {
   ws.on("message", (msg) => {
     try {
       const data = JSON.parse(msg);
+      console.log(data);
       if (data.type === "join") {
         ws.room = data.room;
         if (!rooms[data.room]) rooms[data.room] = [];
