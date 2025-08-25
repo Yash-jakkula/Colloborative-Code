@@ -43,113 +43,110 @@ exports.activate = activate;
 exports.deactivate = deactivate;
 const vscode = __importStar(__webpack_require__(1));
 const WebSocket = __webpack_require__(2);
-const fs = __importStar(__webpack_require__(3));
-const path = __importStar(__webpack_require__(4));
+const crypto_1 = __webpack_require__(3);
 let ws = null;
 let roomCode = "";
+let clientId = (0, crypto_1.randomUUID)(); // Unique ID for each editor
 let isHost = false;
+let applyingRemoteChange = false;
 function activate(context) {
+    // Command to start collaboration
     const disposable = vscode.commands.registerCommand("colloborative.startSession", async () => {
         roomCode = await vscode.window.showInputBox({
             placeHolder: "Enter room code",
-            prompt: "Users with the same code will join the same room"
+            prompt: "Users with the same code join the same room"
         }) || "";
         const role = await vscode.window.showQuickPick(["Host", "Client"], {
-            placeHolder: "Choose your role"
+            placeHolder: "Select your role"
         });
         isHost = role === "Host";
         connectWebSocket();
-        // Sync text changes
+        // Host sends the active file immediately when opened or switched
+        if (isHost) {
+            vscode.window.onDidChangeActiveTextEditor((editor) => {
+                if (editor && ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({
+                        type: "activeFile",
+                        room: roomCode,
+                        filePath: editor.document.uri.toString(),
+                        content: editor.document.getText()
+                    }));
+                }
+            });
+        }
+        // Broadcast incremental changes
         vscode.workspace.onDidChangeTextDocument((event) => {
-            if (ws && ws.readyState === WebSocket.OPEN && isHost) {
+            if (applyingRemoteChange)
+                return; // Skip remote-applied edits
+            if (!ws || ws.readyState !== WebSocket.OPEN)
+                return;
+            if (event.contentChanges.length === 0)
+                return;
+            for (const change of event.contentChanges) {
                 ws.send(JSON.stringify({
                     type: "edit",
                     room: roomCode,
-                    file: event.document.fileName,
-                    content: event.document.getText()
-                }));
-            }
-        });
-        // Sync file open
-        vscode.window.onDidChangeActiveTextEditor((editor) => {
-            if (editor && ws && ws.readyState === WebSocket.OPEN && isHost) {
-                ws.send(JSON.stringify({
-                    type: "fileOpen",
-                    room: roomCode,
-                    file: editor.document.fileName,
-                    content: editor.document.getText()
+                    clientId,
+                    filePath: event.document.uri.toString(),
+                    range: {
+                        start: { line: change.range.start.line, character: change.range.start.character },
+                        end: { line: change.range.end.line, character: change.range.end.character }
+                    },
+                    text: change.text
                 }));
             }
         });
     });
     context.subscriptions.push(disposable);
 }
+// Connect to WebSocket server
 function connectWebSocket() {
     ws = new WebSocket("ws://localhost:3000");
-    ws.on("open", async () => {
+    ws.on("open", () => {
         vscode.window.showInformationMessage(`Connected to room ${roomCode}`);
         ws?.send(JSON.stringify({ type: "join", room: roomCode, role: isHost ? "host" : "client" }));
-        // Host sends full workspace
-        if (isHost) {
-            const files = await vscode.workspace.findFiles("**/*");
-            for (const file of files) {
-                try {
-                    const content = fs.readFileSync(file.fsPath, "utf-8");
-                    ws?.send(JSON.stringify({
-                        type: "workspaceFile",
-                        room: roomCode,
-                        file: file.fsPath,
-                        content
-                    }));
-                }
-                catch (err) {
-                    console.error("Error reading file", file.fsPath, err);
-                }
-            }
-        }
     });
-    ws.on("message", async (data) => {
+    ws.on("message", async (msg) => {
         try {
-            const msg = JSON.parse(data.toString());
-            if (msg.room !== roomCode)
+            const data = JSON.parse(msg.toString());
+            if (data.room !== roomCode)
                 return; // Ignore other rooms
-            switch (msg.type) {
-                case "workspaceFile":
+            if (data.clientId === clientId)
+                return; // Ignore our own edits
+            switch (data.type) {
+                case "activeFile":
                     if (!isHost) {
-                        const uri = vscode.Uri.file(path.join(vscode.workspace.rootPath || "", path.basename(msg.file)));
-                        const doc = await vscode.workspace.openTextDocument({ content: msg.content, language: "typescript" });
-                        await vscode.window.showTextDocument(doc, { preview: false });
-                    }
-                    break;
-                case "fileOpen":
-                    if (!isHost) {
-                        const doc = await vscode.workspace.openTextDocument({ content: msg.content, language: "typescript" });
+                        const doc = await vscode.workspace.openTextDocument({ content: data.content });
                         await vscode.window.showTextDocument(doc, { preview: false });
                     }
                     break;
                 case "edit":
-                    if (!isHost) {
-                        const editors = vscode.window.visibleTextEditors;
-                        const editor = editors.find(e => path.basename(e.document.fileName) === path.basename(msg.file));
-                        if (editor) {
-                            const edit = new vscode.WorkspaceEdit();
-                            const fullRange = new vscode.Range(editor.document.positionAt(0), editor.document.positionAt(editor.document.getText().length));
-                            edit.replace(editor.document.uri, fullRange, msg.content);
-                            await vscode.workspace.applyEdit(edit);
-                        }
-                    }
+                    applyRemoteEdit(data);
                     break;
             }
         }
         catch (err) {
-            console.error("Message parse error", err);
+            console.error("Failed to handle incoming message:", err);
         }
     });
+    ws.on("close", () => {
+        vscode.window.showWarningMessage("Disconnected from collaboration server");
+    });
+}
+// Apply incremental edit from remote
+async function applyRemoteEdit(data) {
+    const doc = vscode.workspace.textDocuments.find(d => d.uri.toString() === data.filePath);
+    if (!doc)
+        return;
+    const edit = new vscode.WorkspaceEdit();
+    edit.replace(doc.uri, new vscode.Range(new vscode.Position(data.range.start.line, data.range.start.character), new vscode.Position(data.range.end.line, data.range.end.character)), data.text);
+    applyingRemoteChange = true;
+    await vscode.workspace.applyEdit(edit);
+    applyingRemoteChange = false;
 }
 function deactivate() {
-    if (ws) {
+    if (ws)
         ws.close();
-    }
 }
 
 
@@ -169,13 +166,7 @@ module.exports = require("ws");
 /* 3 */
 /***/ ((module) => {
 
-module.exports = require("fs");
-
-/***/ }),
-/* 4 */
-/***/ ((module) => {
-
-module.exports = require("path");
+module.exports = require("crypto");
 
 /***/ })
 /******/ 	]);
