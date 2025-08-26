@@ -4,13 +4,15 @@ import { randomUUID } from "crypto";
 
 let ws: WebSocket | null = null;
 let roomCode = "";
-let clientId = randomUUID(); // Unique ID for each editor
+let clientId = randomUUID(); 
 let isHost = false;
 let applyingRemoteChange = false;
+let hostFilePath: string | null = null; 
+const applyingRemoteChanges: Set<string> = new Set();
+
 
 export function activate(context: vscode.ExtensionContext) {
 
-  // Command to start collaboration
   const disposable = vscode.commands.registerCommand("colloborative.startSession", async () => {
     roomCode = await vscode.window.showInputBox({
       placeHolder: "Enter room code",
@@ -28,10 +30,11 @@ export function activate(context: vscode.ExtensionContext) {
     if (isHost) {
       vscode.window.onDidChangeActiveTextEditor((editor) => {
         if (editor && ws && ws.readyState === WebSocket.OPEN) {
+          hostFilePath = editor.document.uri.toString(); // Save host file path
           ws.send(JSON.stringify({
             type: "activeFile",
             room: roomCode,
-            filePath: editor.document.uri.toString(),
+            filePath: hostFilePath,
             content: editor.document.getText()
           }));
         }
@@ -43,14 +46,13 @@ export function activate(context: vscode.ExtensionContext) {
       if (applyingRemoteChange) return; // Skip remote-applied edits
       if (!ws || ws.readyState !== WebSocket.OPEN) return;
       if (event.contentChanges.length === 0) return;
-      console.log(event,"event on change event");
 
       for (const change of event.contentChanges) {
         ws.send(JSON.stringify({
           type: "edit",
           room: roomCode,
           clientId,
-          filePath: event.document.uri.toString(),
+          filePath: hostFilePath ?? event.document.uri.toString(), // Always use host file path
           range: {
             start: { line: change.range.start.line, character: change.range.start.character },
             end: { line: change.range.end.line, character: change.range.end.character }
@@ -82,6 +84,7 @@ function connectWebSocket() {
 
       switch (data.type) {
         case "activeFile":
+          hostFilePath = data.filePath; // Save host file path
           if (!isHost) {
             const doc = await vscode.workspace.openTextDocument({ content: data.content });
             await vscode.window.showTextDocument(doc, { preview: false });
@@ -105,9 +108,13 @@ function connectWebSocket() {
 
 // Apply incremental edit from remote
 async function applyRemoteEdit(data: any) {
-  const doc = vscode.workspace.textDocuments.find(d => d.uri.toString() === data.filePath);
+  const docUri = hostFilePath!;
+  const doc = vscode.workspace.textDocuments.find(d => d.uri.toString() === docUri);
   if (!doc) return;
 
+  if (applyingRemoteChanges.has(docUri)) return; // Already applying, skip
+
+  applyingRemoteChanges.add(docUri);
   const edit = new vscode.WorkspaceEdit();
   edit.replace(
     doc.uri,
@@ -118,10 +125,10 @@ async function applyRemoteEdit(data: any) {
     data.text
   );
 
-  applyingRemoteChange = true;
   await vscode.workspace.applyEdit(edit);
-  applyingRemoteChange = false;
+  applyingRemoteChanges.delete(docUri);
 }
+
 
 export function deactivate() {
   if (ws) ws.close();
