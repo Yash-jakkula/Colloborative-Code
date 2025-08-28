@@ -1,7 +1,7 @@
 {
-  "name": "colloborative-code",
-  "displayName": "colloborative-code",
-  "description": "first colloborative code extension",
+  "name": "collaborative-code",
+  "displayName": "Collaborative Code",
+  "description": "Collaborative code editing VS Code extension",
   "version": "0.0.1",
   "engines": {
     "vscode": "^1.103.0"
@@ -9,45 +9,39 @@
   "categories": [
     "Other"
   ],
-  "activationEvents": [],
+  "activationEvents": [
+    "onCommand:collaborative.startSession"
+  ],
   "main": "./dist/extension.js",
   "contributes": {
     "commands": [
       {
-        "command": "colloborative.startSession",
+        "command": "collaborative.startSession",
         "title": "Start Collaboration Session"
       }
     ]
   },
   "scripts": {
     "vscode:prepublish": "npm run package",
-    "compile": "webpack",
-    "watch": "webpack --watch",
-    "package": "webpack --mode production --devtool hidden-source-map",
-    "compile-tests": "tsc -p . --outDir out",
-    "watch-tests": "tsc -p . -w --outDir out",
-    "pretest": "npm run compile-tests && npm run compile && npm run lint",
+    "compile": "npx webpack",
+    "watch": "npx webpack --watch",
+    "package": "npx webpack --mode production --devtool hidden-source-map",
     "lint": "eslint src",
+    "pretest": "npm run compile && npm run lint",
     "test": "vscode-test"
   },
   "devDependencies": {
-    "@types/mocha": "^10.0.10",
     "@types/node": "22.x",
     "@types/vscode": "^1.103.0",
     "@types/ws": "^8.18.1",
-    "@typescript-eslint/eslint-plugin": "^8.39.0",
-    "@typescript-eslint/parser": "^8.39.0",
     "@vscode/test-cli": "^0.0.11",
-    "@vscode/test-electron": "^2.5.2",
     "eslint": "^9.32.0",
     "ts-loader": "^9.5.2",
     "typescript": "^5.9.2",
     "webpack": "^5.101.0",
-    "webpack-cli": "^6.0.1",
-    "ws": "^8.18.3"
+    "webpack-cli": "^6.0.1"
   },
   "dependencies": {
-    "bufferutil": "^4.0.9",
-    "utf-8-validate": "^6.0.5"
+    "ws": "^8.18.3"
   }
 }
